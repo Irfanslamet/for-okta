@@ -29,4 +29,4 @@ const cardMessage = 'Selalu jadi cahaya paling hangat di setiap petualangan.'
 
 Empat gambar kartu gabungan sudah dipisahkan menjadi `public/okta-gacha-card-1.png` sampai `public/okta-gacha-card-4.png` dan ditampilkan sebagai gambar kartu utuh; ikon di bawah kartu bisa diklik untuk melihat ulang kartu terkait. Ganti file yang sesuai jika ingin mengubah desain kartu. Kartu kelima menggunakan gambar asli di `public/okta-special-card.png`. Untuk menyesuaikan isi surat, ubah teks di bagian `love-letter` pada file `src/App.tsx`.
 
-Warna, tata letak, dan animasi ada di `src/App.css`; pengaturan font dasar ada di `src/index.css`.
+Mesin gacha lebih dulu memuat dan mendekode kesembilan varian bola sebelum mengaktifkan tombol buka dan menampilkan tumpukannya. Jika pemuatan gagal, pengguna dapat mencoba lagi. Bola yang melompat keluar dipilih acak tanpa pengulangan pada empat tarikan pertama; tarikan kelima menampilkan Love Ball dengan efek khusus dari `public/love-ball.png` lalu kembang api bernuansa ulang tahun ketika kartu langka muncul. Animasi diatur di `src/App.css`.

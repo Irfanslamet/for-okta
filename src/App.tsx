@@ -10,10 +10,46 @@ const bonusCards = [
   { title: 'Langkah Bersama', icon: '☀', style: 'sun', image: '/okta-gacha-card-3.png', message: 'Petualangan paling indah adalah bersamamu.' },
   { title: 'Penjelajah Malam', icon: '♡', style: 'heart', image: '/okta-gacha-card-4.png', message: 'Malam jadi seru saat kita bersama.' },
 ]
+const machineBallVariants = [4, 1, 6, 3, 2, 8, 9, 5, 7, 2, 6, 1, 4, 8, 3, 5, 7, 9, 1, 6, 4, 2, 8, 5]
+const launchableBallVariants = [2, 3, 4, 5, 6, 7, 8, 9]
+
+const loadAndDecodeImage = (source: string) => {
+  const image = new Image()
+  image.decoding = 'async'
+
+  if (typeof image.decode === 'function') {
+    image.src = source
+    return image.decode().then(() => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        throw new Error(`Kartu tidak memiliki ukuran gambar yang valid: ${source}`)
+      }
+    })
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    image.onload = () => {
+      if (image.naturalWidth && image.naturalHeight) resolve()
+      else reject(new Error(`Kartu tidak memiliki ukuran gambar yang valid: ${source}`))
+    }
+    image.onerror = () => reject(new Error(`Gambar kartu gagal dimuat: ${source}`))
+    image.src = source
+    if (image.complete) {
+      if (image.naturalWidth && image.naturalHeight) resolve()
+      else reject(new Error(`Gambar kartu gagal dimuat: ${source}`))
+    }
+  })
+}
 
 function App() {
   const [hasDrawn, setHasDrawn] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
+  const [isPreparingCard, setIsPreparingCard] = useState(false)
+  const [cardLoadError, setCardLoadError] = useState('')
+  const [areMachineBallsReady, setAreMachineBallsReady] = useState(false)
+  const [isLoadingMachineBalls, setIsLoadingMachineBalls] = useState(true)
+  const [machineBallLoadError, setMachineBallLoadError] = useState('')
+  const [machineBallLoadAttempt, setMachineBallLoadAttempt] = useState(0)
+  const [activeLaunchBall, setActiveLaunchBall] = useState('/love-ball.png')
   const [revealedCount, setRevealedCount] = useState(0)
   const [selectedCard, setSelectedCard] = useState(0)
   const [showLetter, setShowLetter] = useState(false)
@@ -21,11 +57,37 @@ function App() {
   const [audioNotice, setAudioNotice] = useState('')
   const drawingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const packSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const usedLaunchVariants = useRef(new Set<number>())
   const audioEnabled = useRef(true)
   const audioEngine = useRef<GachaAudio | null>(null)
 
   useEffect(() => {
-    return () => audioEngine.current?.disable()
+    let isCurrentAttempt = true
+    const sources = [...new Set([...launchableBallVariants, 1].map((variant) => `/pokeball-${variant}.png`))]
+    sources.push('/love-ball.png')
+
+    void Promise.all(sources.map(loadAndDecodeImage)).then(() => {
+      if (isCurrentAttempt) setAreMachineBallsReady(true)
+    }).catch((error: unknown) => {
+      console.error('Gagal memuat gambar Poké Ball untuk mesin gacha.', error)
+      if (isCurrentAttempt) {
+        setMachineBallLoadError('Beberapa Poké Ball belum berhasil dimuat. Periksa koneksi lalu coba lagi.')
+      }
+    }).finally(() => {
+      if (isCurrentAttempt) setIsLoadingMachineBalls(false)
+    })
+
+    return () => {
+      isCurrentAttempt = false
+    }
+  }, [machineBallLoadAttempt])
+
+  useEffect(() => {
+    return () => {
+      if (drawingTimer.current) clearTimeout(drawingTimer.current)
+      if (packSoundTimer.current) clearTimeout(packSoundTimer.current)
+      audioEngine.current?.disable()
+    }
   }, [])
 
   const getAudioEngine = () => {
@@ -75,13 +137,35 @@ function App() {
     void startAudio().catch(handleAudioError)
   }
 
-  const drawCard = () => {
-    if (isDrawing || hasDrawn) return
+  const drawCard = async () => {
+    if (isDrawing || hasDrawn || !areMachineBallsReady) return
     const nextCount = revealedCount + 1
+    const imageSource = nextCount === 5 ? '/okta-special-card.png' : bonusCards[nextCount - 1].image
+    const availableVariants = launchableBallVariants.filter((variant) => !usedLaunchVariants.current.has(variant))
+    const launchVariant = nextCount === 5
+      ? null
+      : availableVariants[Math.floor(Math.random() * availableVariants.length)]
+    const nextLaunchBall = launchVariant === null ? '/love-ball.png' : `/pokeball-${launchVariant}.png`
+    setCardLoadError('')
+    setIsPreparingCard(true)
+    setIsDrawing(true)
     playEffect('click')
+
+    try {
+      await Promise.all([loadAndDecodeImage(imageSource), loadAndDecodeImage(nextLaunchBall)])
+    } catch (error) {
+      console.error(`Gagal menyiapkan gambar kartu atau Poké Ball untuk tarikan ${nextCount}.`, error)
+      setCardLoadError('Gambar kartu atau Poké Ball belum berhasil dimuat. Periksa koneksi lalu tekan tombol untuk mencoba lagi.')
+      setIsPreparingCard(false)
+      setIsDrawing(false)
+      return
+    }
+
+    if (launchVariant !== null) usedLaunchVariants.current.add(launchVariant)
+    setActiveLaunchBall(nextLaunchBall)
+    setIsPreparingCard(false)
     if (packSoundTimer.current) clearTimeout(packSoundTimer.current)
     packSoundTimer.current = setTimeout(() => playEffect('pack', nextCount === 5), 140)
-    setIsDrawing(true)
     const revealDelay = nextCount === 5 ? 1650 : 700
 
     drawingTimer.current = setTimeout(() => {
@@ -96,7 +180,10 @@ function App() {
     if (drawingTimer.current) clearTimeout(drawingTimer.current)
     if (packSoundTimer.current) clearTimeout(packSoundTimer.current)
     setShowLetter(false)
+    setCardLoadError('')
+    setIsPreparingCard(false)
     setIsDrawing(false)
+    usedLaunchVariants.current.clear()
     setRevealedCount(0)
     setSelectedCard(0)
     setHasDrawn(false)
@@ -104,6 +191,13 @@ function App() {
 
   const selectCard = (cardNumber: number) => {
     if (cardNumber <= revealedCount) setSelectedCard(cardNumber)
+  }
+
+  const retryMachineBalls = () => {
+    setAreMachineBallsReady(false)
+    setIsLoadingMachineBalls(true)
+    setMachineBallLoadError('')
+    setMachineBallLoadAttempt((attempt) => attempt + 1)
   }
 
   return (
@@ -149,22 +243,46 @@ function App() {
           </p>
         </div>
 
-        <div className={`gacha-stage ${isDrawing ? 'is-drawing' : ''} ${isDrawing && revealedCount === 4 ? 'is-final-draw' : ''} ${selectedCard === 5 ? 'has-final-card' : ''}`}>
+        <div className={`gacha-stage ${isDrawing ? 'is-drawing' : ''} ${isDrawing && !isPreparingCard ? 'is-ball-launching' : ''} ${isDrawing && revealedCount === 4 ? 'is-final-draw' : ''} ${selectedCard === 5 ? 'has-final-card' : ''}`}>
           <div className="stage-sparkle sparkle-left" aria-hidden="true">✳</div>
           <div className="stage-sparkle sparkle-right" aria-hidden="true">✦</div>
           <div className="stage-sparkle sparkle-top" aria-hidden="true">✧</div>
 
-          {selectedCard === 0 && revealedCount === 0 && !isDrawing ? (
-            <div className="machine-wrap" aria-label="Mesin gacha berbentuk kapsul hati">
+          {isDrawing || (selectedCard === 0 && revealedCount === 0) ? (
+            <div className="machine-wrap" aria-label="Mesin gacha dengan berbagai jenis Poké Ball">
               <div className="machine-halo" />
               <div className="machine">
                 <div className="machine-top">
-                  <div className="machine-shine" />
-                  <div className="capsule">
-                    <div className="capsule-top"><span>♡</span></div>
-                    <div className="capsule-bottom" />
-                    <div className="capsule-glint" />
+                  <div className="machine-ball-pile">
+                    {areMachineBallsReady ? machineBallVariants.map((variant, index) => (
+                        <img
+                          className="machine-ball"
+                          src={`/pokeball-${variant}.png`}
+                          alt=""
+                          draggable={false}
+                          key={`${variant}-${index}`}
+                        />
+                      ))
+                      : (
+                        <div className="machine-assets-loader" role={machineBallLoadError ? 'alert' : 'status'} aria-live="polite">
+                          {machineBallLoadError ? (
+                            <span>bola belum siap</span>
+                          ) : (
+                            <>
+                              <span className="machine-loader-spinner" aria-hidden="true" />
+                              <span>menyiapkan bola...</span>
+                            </>
+                          )}
+                        </div>
+                      )}
                   </div>
+                  <img className="machine-ball-launch" src={activeLaunchBall} alt="" aria-hidden="true" />
+                  {isDrawing && revealedCount === 4 && (
+                    <div className="machine-rare-flash" aria-hidden="true">
+                      <span>✦</span><span>✧</span><span>★</span><span>✦</span><span>♡</span><span>✧</span>
+                    </div>
+                  )}
+                  <div className="machine-shine" />
                   <span className="machine-star star-a">✦</span>
                   <span className="machine-star star-b">✧</span>
                 </div>
@@ -187,6 +305,18 @@ function App() {
           ) : (
             <div className={`card-reveal ${isDrawing ? 'is-revealing' : ''} ${isDrawing && revealedCount === 4 ? 'final-reveal-pending' : ''} ${selectedCard === 5 ? 'final-reveal' : ''}`}>
               <div className="reveal-rays" aria-hidden="true" />
+              {selectedCard === 5 && revealedCount === 5 && (
+                <div className="birthday-fireworks" aria-hidden="true">
+                  <span className="birthday-firework firework-left" />
+                  <span className="birthday-firework firework-right" />
+                  <span className="birthday-firework firework-center" />
+                  <span className="birthday-confetti confetti-one">✦</span>
+                  <span className="birthday-confetti confetti-two">✧</span>
+                  <span className="birthday-confetti confetti-three">♡</span>
+                  <span className="birthday-confetti confetti-four">✦</span>
+                  <span className="birthday-confetti confetti-five">✧</span>
+                </div>
+              )}
               {isDrawing && revealedCount === 4 && (
                 <div className="final-flash" aria-hidden="true">
                   <span>✦</span><span>✧</span><span>♡</span><span>✦</span><span>✧</span>
@@ -236,18 +366,20 @@ function App() {
         <div className="action-area">
           {!hasDrawn ? (
             <>
-              <button className={`draw-button ${revealedCount === 4 ? 'final-draw-button' : ''}`} type="button" onClick={drawCard} disabled={isDrawing}>
-                <span className="button-icon" aria-hidden="true">{isDrawing ? '✦' : revealedCount === 4 ? '★' : '♡'}</span>
+              <button className={`draw-button ${revealedCount === 4 ? 'final-draw-button' : ''}`} type="button" onClick={drawCard} disabled={isDrawing || !areMachineBallsReady}>
+                <span className="button-icon" aria-hidden="true">{isDrawing || isLoadingMachineBalls ? '✦' : revealedCount === 4 ? '★' : '♡'}</span>
                 {isDrawing
-                  ? revealedCount === 4 ? 'menyiapkan kartu paling langka...' : `membuka kartu ${revealedCount + 1} dari 5...`
-                  : revealedCount === 0 ? 'buka kapsulmu' : revealedCount === 4 ? 'ungkap kartu paling langka' : 'buka kartu berikutnya'}
-                {!isDrawing && <span className="button-arrow" aria-hidden="true">↗</span>}
+                  ? isPreparingCard ? 'memuat gambar kartu...' : revealedCount === 4 ? 'menyiapkan kartu paling langka...' : `membuka kartu ${revealedCount + 1} dari 5...`
+                  : isLoadingMachineBalls ? 'menyiapkan Poké Ball...'
+                    : revealedCount === 0 ? 'buka kapsulmu' : revealedCount === 4 ? 'ungkap kartu paling langka' : 'buka kartu berikutnya'}
+                {!isDrawing && areMachineBallsReady && <span className="button-arrow" aria-hidden="true">↗</span>}
               </button>
               <p className="button-hint">
                 <span aria-hidden="true">✧</span>
                 {isDrawing
-                  ? 'sebentar ya, kejutanmu sedang disiapkan'
-                  : revealedCount === 0
+                  ? isPreparingCard ? 'menyiapkan gambar agar kartu tampil sempurna' : 'sebentar ya, kejutanmu sedang disiapkan'
+                  : isLoadingMachineBalls ? 'memuat semua variasi bola sebelum mesin siap'
+                    : revealedCount === 0
                     ? 'lima kartu manis menunggu untuk dibuka satu per satu'
                     : revealedCount < 4
                       ? `${5 - revealedCount} kartu lagi menunggu untuk dibuka`
@@ -255,6 +387,19 @@ function App() {
                         ? 'tarikan terakhir... ada kartu super langka!'
                         : 'lima kartu sudah terbuka'}
               </p>
+              {machineBallLoadError && (
+                <>
+                  <p className="card-load-error" role="alert">{machineBallLoadError}</p>
+                  <button
+                    className="machine-assets-retry"
+                    type="button"
+                    onClick={retryMachineBalls}
+                  >
+                    Coba muat ulang Poké Ball
+                  </button>
+                </>
+              )}
+              {cardLoadError && <p className="card-load-error" role="alert">{cardLoadError}</p>}
             </>
           ) : (
             <div className="revealed-actions">

@@ -5,7 +5,7 @@ type Tone = {
   volume: number
 }
 
-const ambienceVolume = 0.15
+const ambienceVolume = 0.50
 
 export class GachaAudio {
   private context: AudioContext | null = null
